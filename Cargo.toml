@@ -1,0 +1,7 @@
+[workspace]
+members = [
+    "concurrent-map",
+    "ebr",
+    "sled-project_bloodstone",
+    "inline-array"
+]
