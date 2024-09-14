@@ -501,7 +501,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
         tree.clear()?;
 
         self.collection_name_mapping.remove(name_ref)?;
-
+        self.collection_name_mapping.flush()?;
         Ok(true)
     }
     /// Open or create a new disk-backed Tree with its own keyspace,
@@ -549,7 +549,7 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         self.collection_name_mapping
             .insert(name_ref, &collection_id.0.to_le_bytes())?;
-
+        self.collection_name_mapping.flush()?;
         trees.insert(collection_id, tree.clone());
 
         Ok(tree)
