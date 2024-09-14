@@ -5,6 +5,7 @@ use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
+use rayon::vec;
 
 use crate::*;
 
@@ -224,10 +225,28 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
                 )
             })
             .collect();
-
         let collection_name_mapping =
             trees.get(&NAME_MAPPING_COLLECTION_ID).unwrap().clone();
-
+        let sorted_trees = trees.iter().map(|(k, _)| k);
+        let mut missing_trees = vec![];
+        'outer: for trees_collection_id in sorted_trees {
+            if trees_collection_id == &NAME_MAPPING_COLLECTION_ID || trees_collection_id == &DEFAULT_COLLECTION_ID {
+                continue;
+            }
+            for kv_res in collection_name_mapping.iter() {
+                let (_collection_name, collection_id_buf) = kv_res.unwrap();
+                let collection_id = CollectionId(u64::from_le_bytes(
+                    collection_id_buf.as_ref().try_into().unwrap(),
+                ));
+                if trees_collection_id == &collection_id {
+                    continue 'outer;
+                }
+            }
+            missing_trees.push(*trees_collection_id);
+        }
+        for missing_tree in &missing_trees {
+            trees.remove(&missing_tree);
+        }
         let default_tree = trees.get(&DEFAULT_COLLECTION_ID).unwrap().clone();
 
         for kv_res in collection_name_mapping.iter() {
@@ -272,7 +291,6 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
 
         let collection_id_allocator =
             Arc::new(Allocator::from_allocated(&allocated_collection_ids));
-
         assert_eq!(collection_name_mapping.len() + 2, trees.len());
 
         let ret = Db {
@@ -285,7 +303,17 @@ impl<const LEAF_FANOUT: usize> Db<LEAF_FANOUT> {
             _shutdown_dropper,
             was_recovered,
         };
-
+        if !missing_trees.is_empty() {
+            let new_path = config.path.to_path_buf().with_extension("repaired");
+            println!(
+                "Db is in an unsound state, some trees might be missing, a repaired db will be created at: {:?}, please use the repaired db from now on, note that only the unsoundness will be repaired, missing trees will not be recovered",
+                &new_path
+            );
+            let new_config = config.clone().path(new_path);
+            let repaired_db: Db<LEAF_FANOUT> = Db::open_with_config(&new_config)?;
+            let export = ret.export();
+            repaired_db.import(export);
+        }
         if let Some(flush_every_ms) = ret.cache.config.flush_every_ms {
             let spawn_res = std::thread::Builder::new()
                 .name("sled_flusher".into())
